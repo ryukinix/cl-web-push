@@ -4,13 +4,14 @@
 
 (defun b64url-encode (bytes)
   "Encodes bytes into a Base64 URL-safe string without padding."
-  (string-right-trim "=" (cl-base64:usb8-array-to-base64-string bytes :uri t)))
+  ;; cl-base64 uses '.' as padding for URI format. Standard WebPush expects no padding.
+  (string-right-trim "." (cl-base64:usb8-array-to-base64-string bytes :uri t)))
 
 (defun b64url-decode (string)
   "Decodes a Base64 URL-safe string."
-  ;; Add padding if necessary
+  ;; Add padding if necessary. cl-base64 expects '.' as padding character when :uri t is used.
   (let* ((padding-len (mod (- 4 (mod (length string) 4)) 4))
-         (padded-string (concatenate 'string string (make-string (if (= padding-len 4) 0 padding-len) :initial-element #\=))))
+         (padded-string (concatenate 'string string (make-string (if (= padding-len 4) 0 padding-len) :initial-element #\.))))
     (cl-base64:base64-string-to-usb8-array padded-string :uri t)))
 
 (defun generate-vapid-keys ()
