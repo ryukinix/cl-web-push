@@ -7,4 +7,5 @@
            #:b64url-encode
            #:b64url-decode
            #:encrypt-payload
-           #:send-push-notification))
+           #:send-push-notification
+           #:generate-keys-cli))

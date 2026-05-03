@@ -27,12 +27,22 @@ Load it from quicklisp:
 
 ### 1. Generating your VAPID Keys
 
-To send a push notification, you need your server application keys.
+To send a push notification, you need your server application keys. You can generate them sequentially using the built-in CLI tool from your terminal shell easily without spinning the REPL:
 
+```sh
+sbcl --eval '(ql:quickload :cl-web-push)' --eval '(cl-web-push:generate-keys-cli)' --quit
+```
+
+This will output your standard `.env` variables that you should store securely in your production backend environment:
+
+```env
+VAPID_PUBLIC_KEY=BLjgN2iS...
+VAPID_PRIVATE_KEY=kCfzN6...
+```
+
+For generating programmatically inside Lisp:
 ```common-lisp
 (multiple-value-bind (public private) (cl-web-push:generate-vapid-keys)
-  ;; Save these keys securely. You'll use the public key in your frontend
-  ;; service-worker subscription parameters, and the private key to secure your HTTP envelope.
   (format t "Public: ~A~%" public)
   (format t "Private: ~A~%" private))
 ```

@@ -9,7 +9,8 @@
 (ignore-errors (ql:quickload :hunchentoot)) ; Used just to serve the static frontend
 
 (defpackage #:cl-web-push/e2e
-  (:use #:cl))
+  (:use #:cl)
+  (:export #:start-frontend #:trigger-push))
 (in-package #:cl-web-push/e2e)
 
 (defvar *server* nil)

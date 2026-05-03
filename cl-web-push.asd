@@ -13,7 +13,8 @@
   :components ((:file "package")
                (:file "vapid")
                (:file "encryption")
-               (:file "push"))
+               (:file "push")
+               (:file "cli"))
   :in-order-to ((asdf:test-op (asdf:test-op #:cl-web-push/test))))
 
 (asdf:defsystem #:cl-web-push/test
