@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>C L Web Push E2E Test</title>
+</head>
+<body>
+  <h1>Web Push Testing</h1>
+  <button id="subscribe">Subscribe to Notifications</button>
+  <br><br>
+  <h3>1. Paste your VAPID Public Key here:</h3>
+  <input type="text" id="vapid" size="100" placeholder="BMQ...">
+  
+  <h3>2. Generated Subscription JSON (Copy to Common Lisp):</h3>
+  <textarea id="subscription" rows="8" cols="100" readonly></textarea>
+
+  <script>
+    // Utility to convert Base64-URL to Uint8Array for the browser API
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    // Register empty service worker to handle the 'push' event
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      navigator.serviceWorker.register('sw.js')
+        .then(function(reg) {
+          console.log('Service Worker Registered!', reg);
+        }).catch(function(err) {
+          console.log('Service Worker registration failed: ', err);
+        });
+    }
+
+    document.getElementById('subscribe').addEventListener('click', function() {
+      const vapidKey = document.getElementById('vapid').value;
+      if (!vapidKey) {
+        alert("Please paste the VAPID public key first!");
+        return;
+      }
+
+      navigator.serviceWorker.ready.then(function(reg) {
+        reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey)
+        }).then(function(subscription) {
+          document.getElementById('subscription').value = JSON.stringify(subscription);
+          console.log("Subscription:", subscription);
+          alert("Subscribed! Copy the JSON to Lisp.");
+        }).catch(function(e) {
+          if (Notification.permission === 'denied') {
+            console.warn('Permission for notifications was denied.');
+          } else {
+            console.error('Unable to subscribe to push.', e);
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
