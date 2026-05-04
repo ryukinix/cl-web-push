@@ -43,3 +43,19 @@
                                                     salt)))
       (true (typep ciphertext '(vector (unsigned-byte 8))))
       (true (> (length ciphertext) (length payload))))))
+
+(define-test invalid-key-rejection
+  ;; Ensure we assert explicitly instead of passing an empty points array to Diffie Hellman
+  (let* ((server-keys (multiple-value-list (ironclad:generate-key-pair :secp256r1)))
+         (salt (ironclad:random-data 16))
+         (auth-secret (ironclad:random-data 16))
+         (payload (ironclad:ascii-string-to-byte-array "Testing Invalid Key"))
+         ;; Simulating a parsed invalid key representing a 0 byte component or corrupted state
+         (invalid-client-public-key (ironclad:make-public-key :secp256r1 :y (make-array 0 :element-type '(unsigned-byte 8)))))
+    (fail (cl-web-push:encrypt-payload payload 
+                                        auth-secret 
+                                        invalid-client-public-key
+                                        (first server-keys) 
+                                        (second server-keys) 
+                                        salt)
+          'error)))

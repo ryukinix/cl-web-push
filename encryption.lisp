@@ -14,6 +14,8 @@
   "Convert an Ironclad secp256r1 public key to Web Push standard uncompressed representation.
    Web Push expects the 0x04 uncompressed format identifier."
   (let ((y-bytes (ironclad:secp256r1-key-y pub-key)))
+    (when (or (not y-bytes) (= (length y-bytes) 0))
+      (error "Cannot serialize public key: Ironclad returned empty Y bytes."))
     ;; y-bytes inside ironclad secp256r1 implementation is actually the concatenation of X and Y
     ;; but it omits the 0x04 uncompressed marker required by WebPush implementations.
     (let ((result (make-array (1+ (length y-bytes)) :element-type '(unsigned-byte 8))))
@@ -23,6 +25,10 @@
 
 (defun derive-shared-secret (private-key public-key)
   "Derive the shared secret using ECDH."
+  ;; Defend against malformed ironclad public keys lacking proper coordinates
+  (let ((y-bytes (ironclad:secp256r1-key-y public-key)))
+    (when (or (not y-bytes) (= (length y-bytes) 0))
+      (error "Malformated ironclad secp256r1 public key logic object structurally missing initialized EC point coordinate arrays!")))
   ;; public-key object should already be reconstructed into format supported by diffie-hellman
   (ironclad:diffie-hellman private-key public-key))
 
