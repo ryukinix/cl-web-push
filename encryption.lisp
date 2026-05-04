@@ -124,15 +124,38 @@
          
          ;; 7. NONCE = HKDF-Expand(PRK_key, "Content-Encoding: nonce" || 0x00, 12)
          (nonce-info (ironclad:ascii-string-to-byte-array (format nil "Content-Encoding: nonce~A" (code-char 0))))
-         (nonce (hkdf-expand prk-key nonce-info 12)))
+         (nonce (hkdf-expand prk-key nonce-info 12))
+         
+         (server-public-key-bytes (serialize-public-key server-public-key)))
     
     ;; Pad payload with 0x02 block (padding delimiter for aes128gcm per RFC 8291)
     (let* ((padded-payload (make-array (+ (length payload) 2) :element-type '(unsigned-byte 8) :initial-element 0)))
       (replace padded-payload payload)
       (setf (aref padded-payload (length payload)) 2) ;; Padding delimiter
-      (let ((empty-aad (make-array 0 :element-type '(unsigned-byte 8))))
-        (multiple-value-bind (ciphertext tag) (aes-gcm-encrypt cek nonce padded-payload empty-aad)
-          (let ((result (make-array (+ (length ciphertext) (length tag)) :element-type '(unsigned-byte 8))))
-            (replace result ciphertext)
-            (replace result tag :start1 (length ciphertext))
-            result))))))
+    
+    ;; Combine pieces for final payload (as defined in aes128gcm):
+    ;; [salt=16 bytes] || [rs (record size) uint32 = 4096 (0x00,0x00,0x10,0x00)] || [idlen=1 byte] || [key_id = server_public_key_bytes] || [ciphertext...]
+    (let* ((rs (make-array 4 :element-type '(unsigned-byte 8) :initial-contents '(0 0 16 0)))
+           (idlen (make-array 1 :element-type '(unsigned-byte 8) :initial-element (length server-public-key-bytes)))
+           (empty-aad (make-array 0 :element-type '(unsigned-byte 8))))
+      (multiple-value-bind (raw-ciphertext tag) (aes-gcm-encrypt cek nonce padded-payload empty-aad)
+        (let ((result (make-array (+ 16 4 1 (length server-public-key-bytes) (length raw-ciphertext) (length tag)) :element-type '(unsigned-byte 8)))
+              (pos 0))
+          ;; 1. Salt
+          (replace result salt :start1 pos)
+          (incf pos 16)
+          ;; 2. Record Size (rs) 
+          (replace result rs :start1 pos)
+          (incf pos 4)
+          ;; 3. Key ID Length (idlen)
+          (replace result idlen :start1 pos)
+          (incf pos 1)
+          ;; 4. Server Public Key Bytes (key_id)
+          (replace result server-public-key-bytes :start1 pos)
+          (incf pos (length server-public-key-bytes))
+          ;; 5. Ciphertext 
+          (replace result raw-ciphertext :start1 pos)
+          (incf pos (length raw-ciphertext))
+          ;; 6. Tag
+          (replace result tag :start1 pos)
+          result))))))

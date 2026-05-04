@@ -76,16 +76,10 @@
            (jwt (create-vapid-jwt audience vapid-subject reconstructed-vapid-priv))
            
            ;; Headers
-           (crypto-key (format nil "dh=~A, p256ecdsa=~A"
-                               (b64url-encode (serialize-public-key server-public-key))
-                               vapid-public-key))
-           (encryption (format nil "salt=~A" (b64url-encode salt)))
-           (headers (list (cons "Authorization" (format nil "vapid t=~A, k=~A" jwt vapid-public-key))
-                          (cons "Crypto-Key" crypto-key)
-                          (cons "Encryption" encryption)
-                          (cons "Content-Encoding" "aes128gcm")
-                          (cons "TTL" "43200") ; 12 hours
-                          (cons "Content-Type" "application/octet-stream"))))
+           (headers `(("Authorization" . ,(format nil "vapid t=~A, k=~A" jwt vapid-public-key))
+                      ("Content-Encoding" . "aes128gcm")
+                      ("TTL" . "43200") ; 12 hours
+                      ("Content-Type" . "application/octet-stream"))))
       
       ;; Make HTTP POST request to the push service endpoint
       (dex:post endpoint 
