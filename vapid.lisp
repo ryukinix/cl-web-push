@@ -36,14 +36,16 @@
   (let* ((header (b64url-encode (ironclad:ascii-string-to-byte-array "{\"typ\":\"JWT\",\"alg\":\"ES256\"}")))
          ;; Calculate expiration (12 hours from now)
          (exp (unix-time (+ 43200))) 
-         (claims-alist (list (cons "aud" audience)
-                             (cons "exp" exp)
-                             (cons "sub" subject)))
-         (claims (b64url-encode (ironclad:ascii-string-to-byte-array 
-                                 (cl-json:encode-json-alist-to-string claims-alist))))
+         ;; Use a direct string format instead of cl-json to avoid escaped forward slashes 
+         ;; in audience URLs like "https:\/\/fcm.googleapis.com" which may fail strict parsers.
+         (claims-json (format nil "{\"aud\":\"~A\",\"exp\":~A,\"sub\":\"~A\"}" 
+                              audience exp subject))
+         (claims (b64url-encode (ironclad:ascii-string-to-byte-array claims-json)))
          (message (format nil "~A.~A" header claims))
          (message-bytes (ironclad:ascii-string-to-byte-array message))
          (signature (ironclad:sign-message private-key message-bytes)))
+    ;; ironclad:sign-message already returns exactly 64 bytes (R || S)
+    ;; It does NOT return ASN.1 DER format.
     (format nil "~A.~A" message (b64url-encode signature))))
 
 (defun unix-time (&optional (offset 0))
