@@ -17,11 +17,14 @@
     (when (or (not y-bytes) (= (length y-bytes) 0))
       (error "Cannot serialize public key: Ironclad returned empty Y bytes."))
     ;; y-bytes inside ironclad secp256r1 implementation is actually the concatenation of X and Y
-    ;; but it omits the 0x04 uncompressed marker required by WebPush implementations.
-    (let ((result (make-array (1+ (length y-bytes)) :element-type '(unsigned-byte 8))))
-      (setf (aref result 0) 4) ; 0x04 Uncompressed
-      (replace result y-bytes :start1 1)
-      result)))
+    ;; AND IT ALREADY INCLUDES THE 0x04 UNCOMPRESSED MARKER IN IRONCLAD > 0.50!
+    ;; Let's check if the format identifier is already present:
+    (if (and (> (length y-bytes) 0) (= (aref y-bytes 0) 4) (= (length y-bytes) 65))
+        y-bytes
+        (let ((result (make-array (1+ (length y-bytes)) :element-type '(unsigned-byte 8))))
+          (setf (aref result 0) 4) ; 0x04 Uncompressed
+          (replace result y-bytes :start1 1)
+          result))))
 
 (defun derive-shared-secret (private-key public-key)
   "Derive the shared secret using ECDH."

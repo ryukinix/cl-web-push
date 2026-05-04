@@ -4,22 +4,28 @@
 
 (defun b64url-encode (bytes)
   "Encodes bytes into a Base64 URL-safe string without padding."
-  ;; cl-base64 uses '.' as padding for URI format. Standard WebPush expects no padding.
-  (string-right-trim "." (cl-base64:usb8-array-to-base64-string bytes :uri t)))
+  ;; standard WebPush expects no padding.
+  ;; cl-base64 base64-string output needs standard conversions
+  (let ((b64 (cl-base64:usb8-array-to-base64-string bytes)))
+    (string-right-trim "=" (substitute #\_ #\/ (substitute #\- #\+ b64)))))
 
 (defun b64url-decode (string)
   "Decodes a Base64 URL-safe string."
-  ;; Add padding if necessary. cl-base64 expects '.' as padding character when :uri t is used.
-  (let* ((padding-len (mod (- 4 (mod (length string) 4)) 4))
-         (padded-string (concatenate 'string string (make-string (if (= padding-len 4) 0 padding-len) :initial-element #\.))))
-    (cl-base64:base64-string-to-usb8-array padded-string :uri t)))
+  (let* ((string-stripped (string-right-trim "=" string)) ;; Remove incoming equal paddings
+         (padding-len (mod (- 4 (mod (length string-stripped) 4)) 4))
+         (padding-len (if (= padding-len 4) 0 padding-len))
+         ;; Use the standard '=' padding since cl-base64 base64-string-to-usb8-array with :uri nil supports it directly
+         ;; actually, replacing hyphens with pluses and underscores with slashes manually handles standard b64url gracefully
+         (converted (substitute #\+ #\- (substitute #\/ #\_ string-stripped)))
+         (padded-string (concatenate 'string converted (make-string padding-len :initial-element #\=))))
+    (cl-base64:base64-string-to-usb8-array padded-string)))
 
 (defun generate-vapid-keys ()
   "Generate VAPID keys using P-256 curve (secp256r1). 
    Returns (VALUES PUBLIC-KEY PRIVATE-KEY) serialized as Base64-URL strings."
   (multiple-value-bind (priv pub) (ironclad:generate-key-pair :secp256r1)
     (let* ((x (ironclad:secp256r1-key-x priv)) ; Private key material
-           (y (ironclad:secp256r1-key-y pub))  ; Uncompressed public key material (0x04 || X || Y)
+           (y (serialize-public-key pub))  ; Uncompressed public key material (0x04 || X || Y)
            (priv-b64 (b64url-encode x))
            (pub-b64 (b64url-encode y)))
       (values pub-b64 priv-b64))))
