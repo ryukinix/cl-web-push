@@ -25,17 +25,16 @@
     (setf *server* (hunchentoot:start
                     (make-instance 'hunchentoot:easy-acceptor :port *port*))))
   (format t "~%====================================~%")
-  (format t "Frontend is running at http://localhost:~a/~%" *port*)
 
   ;; Generate Keys for the session
   (multiple-value-bind (pub priv) (cl-web-push:generate-vapid-keys)
     (setf *vapid-pub* pub)
     (setf *vapid-priv* priv))
 
-  (format t "~%1. Open your browser to http://127.0.0.1:~a/~%" *port*)
+  (format t "~%1. Open your browser to http://127.0.0.1:~a/index.html~%" *port*)
   (format t "2. Paste this VAPID Public Key into the input box:~%~A~%" *vapid-pub*)
   (format t "3. Click Subscribe, allow permissions, and copy the generated JSON block.~%")
-  (format t "4. Call (cl-web-push/e2e:trigger-push \"YOUR_JSON_HERE\") in this REPL.~%")
+  (format t "4. Paste your json payload in this REPL.~%")
   (format t "====================================~%"))
 
 (defun trigger-push (subscription-json-string)
@@ -49,4 +48,7 @@
   (format t "Push notification dispatched! Check your browser context / OS notification center.~%"))
 
 (eval-when (:execute)
-  (start-frontend))
+  (start-frontend)
+  (format t "JSON: ")
+  (finish-output)
+  (trigger-push (read-line)))
