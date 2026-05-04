@@ -7,6 +7,7 @@
   :serial t
   :depends-on (#:ironclad
                #:nibbles
+               #:flexi-streams
                #:cl-base64
                #:cl-json
                #:dexador)

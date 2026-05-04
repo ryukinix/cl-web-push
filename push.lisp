@@ -30,7 +30,7 @@
          (salt (ironclad:random-data 16))
          
          ;; Encrypt Payload
-         (payload-bytes (ironclad:ascii-string-to-byte-array payload))
+         (payload-bytes (flexi-streams:string-to-octets payload :external-format :utf-8))
          (ciphertext (encrypt-payload payload-bytes client-auth-secret client-public-key server-private-key server-public-key salt))
          
          ;; Extract audience from endpoint (protocol://host)
