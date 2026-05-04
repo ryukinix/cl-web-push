@@ -18,10 +18,10 @@
   (let ((examples-dir (merge-pathnames "example/" (asdf:system-source-directory :cl-web-push))))
     (setf hunchentoot:*dispatch-table*
           (list
-           (hunchentoot:create-static-file-dispatcher-and-handler
-            "/" (merge-pathnames "index.html" examples-dir))
            (hunchentoot:create-folder-dispatcher-and-handler
-            "/" examples-dir)))
+            "/" examples-dir)
+           (hunchentoot:create-static-file-dispatcher-and-handler
+            "" (merge-pathnames "index.html" examples-dir))))
     (setf *server* (hunchentoot:start
                     (make-instance 'hunchentoot:easy-acceptor :port *port*))))
   (format t "~%====================================~%")
