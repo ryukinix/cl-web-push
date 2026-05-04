@@ -31,21 +31,17 @@
       (values pub-b64 priv-b64))))
 
 (defun create-vapid-jwt (audience subject private-key)
-  "Create a signed JWT token using ES256 (secp256r1) for VAPID.
-   `private-key` is the object returned by `ironclad:make-private-key :secp256r1 :x ...`."
-  (let* ((header (b64url-encode (ironclad:ascii-string-to-byte-array "{\"typ\":\"JWT\",\"alg\":\"ES256\"}")))
-         ;; Calculate expiration (12 hours from now)
-         (exp (unix-time (+ 43200))) 
-         ;; Use a direct string format instead of cl-json to avoid escaped forward slashes 
-         ;; in audience URLs like "https:\/\/fcm.googleapis.com" which may fail strict parsers.
-         (claims-json (format nil "{\"aud\":\"~A\",\"exp\":~A,\"sub\":\"~A\"}" 
-                              audience exp subject))
-         (claims (b64url-encode (ironclad:ascii-string-to-byte-array claims-json)))
-         (message (format nil "~A.~A" header claims))
+  "Create a signed JWT token using ES256 (secp256r1) for VAPID."
+  (let* ((header-json "{\"typ\":\"JWT\",\"alg\":\"ES256\"}")
+         (header-b64 (b64url-encode (ironclad:ascii-string-to-byte-array header-json)))
+         (exp (unix-time (+ 43200)))
+         (claims-json (format nil "{\"aud\":\"~A\",\"exp\":~A,\"sub\":\"~A\"}" audience exp subject))
+         (claims-b64 (b64url-encode (ironclad:ascii-string-to-byte-array claims-json)))
+         (message (format nil "~A.~A" header-b64 claims-b64))
          (message-bytes (ironclad:ascii-string-to-byte-array message))
-         (signature (ironclad:sign-message private-key message-bytes)))
-    ;; ironclad:sign-message already returns exactly 64 bytes (R || S)
-    ;; It does NOT return ASN.1 DER format.
+         ;; SHA-256 the message first, SECP256R1 expects the digest according to JWT ES256 spec
+         (digest (ironclad:digest-sequence :sha256 message-bytes))
+         (signature (ironclad:sign-message private-key digest)))
     (format nil "~A.~A" message (b64url-encode signature))))
 
 (defun unix-time (&optional (offset 0))
