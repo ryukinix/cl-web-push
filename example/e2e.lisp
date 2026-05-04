@@ -15,11 +15,15 @@
 
 (defun start-frontend ()
   "Starts a local server at http://localhost:8000 to serve the HTML/SW."
-  (setf hunchentoot:*dispatch-table*
-        (list (hunchentoot:create-folder-dispatcher-and-handler
-               "/" #p"/home/lerax/Desktop/workspace/cl-web-push/example/")))
-  (setf *server* (hunchentoot:start
-                  (make-instance 'hunchentoot:easy-acceptor :port *port*)))
+  (let ((examples-dir (merge-pathnames "example/" (asdf:system-source-directory :cl-web-push))))
+    (setf hunchentoot:*dispatch-table*
+          (list
+           (hunchentoot:create-static-file-dispatcher-and-handler
+            "/" (merge-pathnames "index.html" examples-dir))
+           (hunchentoot:create-folder-dispatcher-and-handler
+            "/" examples-dir)))
+    (setf *server* (hunchentoot:start
+                    (make-instance 'hunchentoot:easy-acceptor :port *port*))))
   (format t "~%====================================~%")
   (format t "Frontend is running at http://localhost:~a/~%" *port*)
 
