@@ -8,7 +8,11 @@
   (let* ((json (cl-json:decode-json-from-string subscription-json-string))
          (endpoint (cdr (assoc :endpoint json)))
          (keys (cdr (assoc :keys json)))
-         (p256dh-str (cdr (assoc :p256dh keys)))
+         ;; JSON decoding maps camelCase/snake_case to Lisp keywords. 
+         ;; "p256dh" can map to :P-256-DH or :P256DH depending on the JSON parser logic.
+         (p256dh-str (or (cdr (assoc :p256dh keys))
+                         (cdr (assoc :p-256-dh keys))
+                         (cdr (assoc :p256-dh keys))))
          (p256dh (if p256dh-str 
                      (let ((decoded (b64url-decode p256dh-str)))
                        (if (= (length decoded) 64)
