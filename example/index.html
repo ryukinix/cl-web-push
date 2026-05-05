@@ -2,19 +2,36 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>C L Web Push E2E Test</title>
+  <title>CL Web Push Autonomous E2E Test</title>
+  <style>
+    body { font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 2em auto; padding: 0 1em; }
+    .status { padding: 1em; border-radius: 4px; margin: 1em 0; }
+    .pending { background: #fff3cd; color: #856404; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+  </style>
 </head>
 <body>
-  <h1>Web Push Testing</h1>
-  <button id="subscribe">Subscribe to Notifications</button>
-  <br><br>
-  <h3>1. Paste your VAPID Public Key here:</h3>
-  <input type="text" id="vapid" size="100" placeholder="BMQ...">
+  <h1>Web Push Autonomous E2E Test</h1>
+  <div id="status" class="status pending">Initializing test...</div>
   
-  <h3>2. Generated Subscription JSON (Copy to Common Lisp):</h3>
-  <textarea id="subscription" rows="8" cols="100" readonly></textarea>
+  <h3>Log:</h3>
+  <pre id="log"></pre>
 
   <script>
+    const statusDiv = document.getElementById('status');
+    const logPre = document.getElementById('log');
+
+    function log(msg) {
+      logPre.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+      console.log(msg);
+    }
+
+    function updateStatus(text, className) {
+      statusDiv.textContent = text;
+      statusDiv.className = `status ${className}`;
+    }
+
     // Utility to convert Base64-URL to Uint8Array for the browser API
     function urlBase64ToUint8Array(base64String) {
       const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -27,40 +44,73 @@
       return outputArray;
     }
 
-    // Register empty service worker to handle the 'push' event
-    if ('serviceWorker' in navigator && 'PushManager' in window) {
-      navigator.serviceWorker.register('sw.js')
-        .then(function(reg) {
-          console.log('Service Worker Registered!', reg);
-        }).catch(function(err) {
-          console.log('Service Worker registration failed: ', err);
-        });
-    }
+    async function runTest() {
+      try {
+        log('Fetching VAPID public key...');
+        const pubKeyResponse = await fetch('/vapid-pub');
+        const vapidKey = await pubKeyResponse.text();
+        log(`Public Key: ${vapidKey}`);
 
-    document.getElementById('subscribe').addEventListener('click', function() {
-      const vapidKey = document.getElementById('vapid').value;
-      if (!vapidKey) {
-        alert("Please paste the VAPID public key first!");
-        return;
-      }
+        log('Registering Service Worker...');
+        const reg = await navigator.serviceWorker.register('sw.js');
+        log('Service Worker registered.');
 
-      navigator.serviceWorker.ready.then(function(reg) {
-        reg.pushManager.subscribe({
+        // Wait for SW to be ready
+        await navigator.serviceWorker.ready;
+        log('Service Worker ready.');
+
+        log('Requesting subscription...');
+        const subscription = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidKey)
-        }).then(function(subscription) {
-          document.getElementById('subscription').value = JSON.stringify(subscription);
-          console.log("Subscription:", subscription);
-          alert("Subscribed! Copy the JSON to Lisp.");
-        }).catch(function(e) {
-          if (Notification.permission === 'denied') {
-            console.warn('Permission for notifications was denied.');
-          } else {
-            console.error('Unable to subscribe to push.', e);
-          }
         });
-      });
+        log('Subscription obtained.');
+
+        log('Sending subscription to server...');
+        const subResponse = await fetch('/subscribe', {
+          method: 'POST',
+          body: JSON.stringify(subscription),
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (subResponse.ok) {
+          log('Subscription sent. Waiting for push notification...');
+          updateStatus('Waiting for push notification...', 'pending');
+        } else {
+          throw new Error('Failed to send subscription to server');
+        }
+
+      } catch (err) {
+        log(`ERROR: ${err.message}`);
+        updateStatus(`Test Failed: ${err.message}`, 'error');
+      }
+    }
+
+    // Listen for messages from the service worker
+    navigator.serviceWorker.addEventListener('message', async (event) => {
+      if (event.data === 'received') {
+        log('Push notification received by Service Worker!');
+        updateStatus('Notification received! Verifying...', 'success');
+        
+        try {
+          const verifyResponse = await fetch('/verify-received', { method: 'POST' });
+          if (verifyResponse.ok) {
+            log('Test verified successfully!');
+            updateStatus('Test Success! You can close this window.', 'success');
+          }
+        } catch (err) {
+          log(`Verification failed: ${err.message}`);
+        }
+      }
     });
+
+    // Start the test
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      runTest();
+    } else {
+      log('Web Push is not supported in this browser.');
+      updateStatus('Web Push not supported', 'error');
+    }
   </script>
 </body>
 </html>

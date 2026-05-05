@@ -27,13 +27,18 @@
           result))))
 
 (defun derive-shared-secret (private-key public-key)
-  "Derive the shared secret using ECDH."
+  "Derive the shared secret using ECDH. SEC1 specifies that the secret is the X coordinate."
   ;; Defend against malformed ironclad public keys lacking proper coordinates
   (let ((y-bytes (ironclad:secp256r1-key-y public-key)))
     (when (or (not y-bytes) (= (length y-bytes) 0))
       (error "Malformated ironclad secp256r1 public key logic object structurally missing initialized EC point coordinate arrays!")))
   ;; public-key object should already be reconstructed into format supported by diffie-hellman
-  (ironclad:diffie-hellman private-key public-key))
+  (let ((point (ironclad:diffie-hellman private-key public-key)))
+    ;; Ironclad returns the uncompressed point (0x04 || X || Y) which is 65 bytes for P-256.
+    ;; We only want the 32-byte X coordinate.
+    (if (and (= (length point) 65) (= (aref point 0) 4))
+        (subseq point 1 33)
+        point)))
 
 (defun hkdf-extract (salt ikm)
   "HKDF-Extract(salt, ikm) -> PRK"
@@ -48,13 +53,13 @@
   ;; OKM = T(1) | T(2) | ... | T(n)
   (let ((hmac (ironclad:make-mac :hmac prk :sha256))
         (okm (make-array length :element-type '(unsigned-byte 8)))
-        (t-prev (make-array 0 :element-type '(unsigned-byte 8))) 
+        (t-prev (make-array 0 :element-type '(unsigned-byte 8)))
         (i 1))
     (loop for pos from 0 below length by 32
           do (let ((t-i (progn
                           ;; We need a fresh hmac context for each block T(i) expansion
                           (let ((block-hmac (ironclad:make-mac :hmac prk :sha256)))
-                            (when (> (length t-prev) 0) 
+                            (when (> (length t-prev) 0)
                               (ironclad:update-mac block-hmac t-prev))
                             (ironclad:update-mac block-hmac info)
                             (ironclad:update-mac block-hmac (make-array 1 :element-type '(unsigned-byte 8) :initial-element i))
@@ -64,32 +69,86 @@
                (incf i)))
     (subseq okm 0 length)))
 
+(defun mul-gf128 (x y)
+  "Multiplication in GF(2^128) for GHASH."
+  (let ((z (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0))
+        (v (copy-seq y)))
+    (loop for i from 0 below 16 do
+      (loop for j from 7 downto 0 do
+        (when (logbitp j (aref x i))
+          (loop for k from 0 below 16 do
+            (setf (aref z k) (logxor (aref z k) (aref v k)))))
+        (let ((lsb (logand (aref v 15) 1)))
+          (loop for k from 15 downto 1 do
+            (setf (aref v k) (logior (ash (aref v k) -1)
+                                     (ash (logand (aref v (1- k)) 1) 7))))
+          (setf (aref v 0) (ash (aref v 0) -1))
+          (when (= lsb 1)
+            (setf (aref v 0) (logxor (aref v 0) #xE1))))))
+    z))
+
 (defun aes-gcm-encrypt (key nonce plaintext associated-data)
   "Encrypts plaintext using AES-GCM, returning (VALUES CIPHERTEXT AUTH-TAG).
-   Key should be 16 bytes (AES-128). Nonce is typically 12 bytes but padded here to 16 for CTR/GMAC."
-  (let* ((padded-nonce (if (= (length nonce) 12)
-                           (let ((pad (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
-                             (replace pad nonce)
-                             ;; The standard counter padding for a 96-bit nonce appends 0x00000001
-                             (setf (aref pad 15) 1) 
-                             pad)
-                           nonce))
+   Key should be 16 bytes (AES-128). Nonce is exactly 12 bytes."
+  (unless (= (length nonce) 12)
+    (error "Nonce must be 12 bytes for AES-GCM."))
+  (let* ((ctr-iv (let ((pad (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
+                   (replace pad nonce)
+                   (setf (aref pad 15) 2)
+                   pad))
+         (cipher (ironclad:make-cipher :aes :key key :mode :ctr :initialization-vector ctr-iv))
          (ciphertext (make-array (length plaintext) :element-type '(unsigned-byte 8)))
-         (cipher (ironclad:make-cipher :aes :key key :mode :ctr :initialization-vector padded-nonce))
-         ;; MAKE-GMAC expects: ironclad:make-mac :gmac key cipher-name initialization-vector
-         (gmac (ironclad:make-mac :gmac key :aes padded-nonce)))
-    (when (and associated-data (> (length associated-data) 0))
-       (ironclad:update-mac gmac associated-data))
+
+         (j0 (let ((pad (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
+               (replace pad nonce)
+               (setf (aref pad 15) 1)
+               pad))
+         (ecb-cipher (ironclad:make-cipher :aes :key key :mode :ecb))
+         (h (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0))
+         (ek-j0 (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0))
+         (zero (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
+
+    (ironclad:encrypt ecb-cipher zero h)
+    (ironclad:encrypt ecb-cipher j0 ek-j0)
     (when (> (length plaintext) 0)
-      (ironclad:encrypt cipher plaintext ciphertext)
-      (ironclad:update-mac gmac ciphertext))
-    ;; GMAC typically requires the length of AAD and Ciphertext appended:
-    (let ((len-block (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
-      (when (> (length associated-data) 0)
-        (setf (nibbles:ub64ref/be len-block 0) (* 8 (length associated-data))))
-      (setf (nibbles:ub64ref/be len-block 8) (* 8 (length ciphertext)))
-      (ironclad:update-mac gmac len-block))
-    (values ciphertext (ironclad:produce-mac gmac))))
+      (ironclad:encrypt cipher plaintext ciphertext))
+
+    ;; GHASH evaluation
+    (let ((y (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
+      ;; Process Associated Data
+      (when (and associated-data (> (length associated-data) 0))
+        (let* ((pad-len (mod (- 16 (mod (length associated-data) 16)) 16))
+               (padded-aad (make-array (+ (length associated-data) pad-len) :element-type '(unsigned-byte 8) :initial-element 0)))
+          (replace padded-aad associated-data)
+          (loop for i from 0 below (length padded-aad) by 16 do
+            (let ((block (make-array 16 :element-type '(unsigned-byte 8))))
+              (replace block padded-aad :start2 i)
+              (loop for j from 0 below 16 do (setf (aref y j) (logxor (aref y j) (aref block j))))
+              (setf y (mul-gf128 y h))))))
+
+      ;; Process Ciphertext
+      (when (> (length ciphertext) 0)
+        (let* ((pad-len (mod (- 16 (mod (length ciphertext) 16)) 16))
+               (padded-ct (make-array (+ (length ciphertext) pad-len) :element-type '(unsigned-byte 8) :initial-element 0)))
+          (replace padded-ct ciphertext)
+          (loop for i from 0 below (length padded-ct) by 16 do
+            (let ((block (make-array 16 :element-type '(unsigned-byte 8))))
+              (replace block padded-ct :start2 i)
+              (loop for j from 0 below 16 do (setf (aref y j) (logxor (aref y j) (aref block j))))
+              (setf y (mul-gf128 y h))))))
+
+      ;; Process Length block
+      (let ((len-block (make-array 16 :element-type '(unsigned-byte 8) :initial-element 0)))
+        (when (and associated-data (> (length associated-data) 0))
+          (setf (nibbles:ub64ref/be len-block 0) (* 8 (length associated-data))))
+        (setf (nibbles:ub64ref/be len-block 8) (* 8 (length ciphertext)))
+        (loop for j from 0 below 16 do (setf (aref y j) (logxor (aref y j) (aref len-block j))))
+        (setf y (mul-gf128 y h)))
+
+      ;; Final XOR with E(K, J0)
+      (loop for i from 0 below 16 do (setf (aref y i) (logxor (aref y i) (aref ek-j0 i))))
+
+      (values ciphertext y))))
 
 (defun build-info (type client-public-key server-public-key)
   "Construct the 'info' parameter for Web Push HKDF."
@@ -113,26 +172,26 @@
          (prk (hkdf-extract client-auth-secret shared-secret))
          ;; 3. IKM = HKDF-Expand(PRK, key_info, 32)
          (ikm (hkdf-expand prk key-info 32))
-         
+
          ;; 4. salt is 16 bytes
          ;; 5. PRK_key = HKDF-Extract(salt, IKM)
          (prk-key (hkdf-extract salt ikm))
-         
+
          ;; 6. CEK = HKDF-Expand(PRK_key, "Content-Encoding: aes128gcm" || 0x00, 16)
          (cek-info (ironclad:ascii-string-to-byte-array (format nil "Content-Encoding: aes128gcm~A" (code-char 0))))
          (cek (hkdf-expand prk-key cek-info 16))
-         
+
          ;; 7. NONCE = HKDF-Expand(PRK_key, "Content-Encoding: nonce" || 0x00, 12)
          (nonce-info (ironclad:ascii-string-to-byte-array (format nil "Content-Encoding: nonce~A" (code-char 0))))
          (nonce (hkdf-expand prk-key nonce-info 12))
-         
+
          (server-public-key-bytes (serialize-public-key server-public-key)))
-    
+
     ;; Pad payload with 0x02 block (padding delimiter for aes128gcm per RFC 8291)
-    (let* ((padded-payload (make-array (+ (length payload) 2) :element-type '(unsigned-byte 8) :initial-element 0)))
+    (let* ((padded-payload (make-array (+ (length payload) 1) :element-type '(unsigned-byte 8))))
       (replace padded-payload payload)
       (setf (aref padded-payload (length payload)) 2) ;; Padding delimiter
-    
+
     ;; Combine pieces for final payload (as defined in aes128gcm):
     ;; [salt=16 bytes] || [rs (record size) uint32 = 4096 (0x00,0x00,0x10,0x00)] || [idlen=1 byte] || [key_id = server_public_key_bytes] || [ciphertext...]
     (let* ((rs (make-array 4 :element-type '(unsigned-byte 8) :initial-contents '(0 0 16 0)))
@@ -144,7 +203,7 @@
           ;; 1. Salt
           (replace result salt :start1 pos)
           (incf pos 16)
-          ;; 2. Record Size (rs) 
+          ;; 2. Record Size (rs)
           (replace result rs :start1 pos)
           (incf pos 4)
           ;; 3. Key ID Length (idlen)
@@ -153,7 +212,7 @@
           ;; 4. Server Public Key Bytes (key_id)
           (replace result server-public-key-bytes :start1 pos)
           (incf pos (length server-public-key-bytes))
-          ;; 5. Ciphertext 
+          ;; 5. Ciphertext
           (replace result raw-ciphertext :start1 pos)
           (incf pos (length raw-ciphertext))
           ;; 6. Tag

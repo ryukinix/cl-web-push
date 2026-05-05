@@ -1,54 +1,86 @@
 ;;;; e2e.lisp
-;; This is an interactive script to simulate the End-to-End flow.
+;; This is an autonomous script to simulate the End-to-End flow.
 
-(ignore-errors (ql:quickload '(:cl-web-push :hunchentoot)))
+(ignore-errors (ql:quickload '(:cl-web-push :hunchentoot :cl-json)))
 
 (defpackage #:cl-web-push/e2e
   (:use #:cl)
-  (:export #:start-frontend #:trigger-push))
+  (:export #:run-e2e-test))
 (in-package #:cl-web-push/e2e)
 
 (defvar *server* nil)
 (defvar *port* 8888)
 (defvar *vapid-pub* nil)
 (defvar *vapid-priv* nil)
-
-(defun start-frontend ()
-  "Starts a local server at http://localhost:8000 to serve the HTML/SW."
-  (let ((examples-dir (merge-pathnames "example/" (asdf:system-source-directory :cl-web-push))))
-    (setf hunchentoot:*dispatch-table*
-          (list
-           (hunchentoot:create-folder-dispatcher-and-handler
-            "/" examples-dir)
-           (hunchentoot:create-static-file-dispatcher-and-handler
-            "" (merge-pathnames "index.html" examples-dir))))
-    (setf *server* (hunchentoot:start
-                    (make-instance 'hunchentoot:easy-acceptor :port *port*))))
-  (format t "~%====================================~%")
-
-  ;; Generate Keys for the session
-  (multiple-value-bind (pub priv) (cl-web-push:generate-vapid-keys)
-    (setf *vapid-pub* pub)
-    (setf *vapid-priv* priv))
-
-  (format t "~%1. Open your browser to http://127.0.0.1:~a/index.html~%" *port*)
-  (format t "2. Paste this VAPID Public Key into the input box:~%~A~%" *vapid-pub*)
-  (format t "3. Click Subscribe, allow permissions, and copy the generated JSON block.~%")
-  (format t "4. Paste your json payload in this REPL.~%")
-  (format t "====================================~%"))
+(defvar *test-finished* nil)
 
 (defun trigger-push (subscription-json-string)
   "Trigger the push notification using the globally state VAPID keys."
-  (cl-web-push:send-push-notification
-   subscription-json-string
-   "Hello from Common Lisp! End-to-End works perfectly 🔥"
-   *vapid-pub*
-   *vapid-priv*
-   "mailto:testing@example.com")
-  (format t "Push notification dispatched! Check your browser context / OS notification center.~%"))
+  (format t "Triggering push for subscription: ~A~%" subscription-json-string)
+  (handler-case
+      (multiple-value-bind (body status headers uri stream)
+          (cl-web-push:send-push-notification
+           subscription-json-string
+           "Hello from Common Lisp! End-to-End works perfectly 🔥"
+           *vapid-pub*
+           *vapid-priv*
+           "mailto:testing@example.com")
+        (declare (ignore uri stream))
+        (format t "Push notification dispatched!~%HTTP Status: ~A~%Response Body: ~A~%Headers: ~A~%" status body headers))
+    (dex:http-request-failed (e)
+      (format t "HTTP Request Failed!~%Status: ~A~%Response body: ~A~%"
+              (dex:response-status e)
+              (dex:response-body e)))
+    (error (e)
+      (format t "General Error triggering push: ~A~%" e))))
+
+(hunchentoot:define-easy-handler (vapid-pub-handler :uri "/vapid-pub") ()
+  (setf (hunchentoot:content-type*) "text/plain")
+  *vapid-pub*)
+
+(hunchentoot:define-easy-handler (subscribe-handler :uri "/subscribe") ()
+  (let ((post-data (hunchentoot:raw-post-data :force-text t)))
+    (if post-data
+        (progn
+          (trigger-push post-data)
+          "OK")
+        (progn
+          (setf (hunchentoot:return-code*) hunchentoot:+http-bad-request+)
+          "Missing post data"))))
+
+(hunchentoot:define-easy-handler (verify-handler :uri "/verify-received") ()
+  (format t "SUCCESS: Notification verified by client!~%")
+  (setf *test-finished* t)
+  "OK")
+
+(defun run-e2e-test ()
+  "Starts a local server and waits for the e2e test to complete."
+  (let ((examples-dir (merge-pathnames "example/" (asdf:system-source-directory :cl-web-push))))
+    ;; Generate Keys for the session
+    (multiple-value-bind (pub priv) (cl-web-push:generate-vapid-keys)
+      (setf *vapid-pub* pub)
+      (setf *vapid-priv* priv))
+
+    (setf *test-finished* nil)
+    (setf *server* (hunchentoot:start
+                    (make-instance 'hunchentoot:easy-acceptor
+                                   :port *port*
+                                   :document-root examples-dir)))
+
+    (format t "~%====================================~%")
+    (format t "E2E Test Server started at http://127.0.0.1:~a/~%" *port*)
+    (format t "Waiting for test completion...~%")
+    (format t "====================================~%")
+
+    (loop until *test-finished* do (sleep 1))
+    (when *server*
+      (hunchentoot:stop *server*)
+      (format t "Stopping server...~%"))))
 
 (eval-when (:execute)
-  (start-frontend)
-  (format t "JSON: ")
-  (finish-output)
-  (trigger-push (read-line)))
+  (handler-case
+      (run-e2e-test)
+      (#+sbcl sb-sys:interactive-interrupt
+       #-sbcl cl:error
+       ()
+       (format t "~%Ctrl+C detected! Aborting test...~%"))))
