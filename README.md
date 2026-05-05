@@ -25,7 +25,7 @@ As this project is brand new, either clone the repo locally into your
 `quicklisp/local-projects` folder or append its path dynamically.
 
 ```sh
-cd ~/quicklisp/local-projects
+cd ~/common-lisp
 git clone https://github.com/ryukinix/cl-web-push.git
 ```
 
@@ -44,7 +44,7 @@ keys. You can generate them sequentially using the built-in CLI tool
 from your terminal shell easily without spinning the REPL:
 
 ```sh
-sbcl --eval '(ql:quickload :cl-web-push)' --eval '(cl-web-push:generate-keys-cli)' --quit
+make generate
 ```
 
 This will output your standard `.env` variables that you should store
