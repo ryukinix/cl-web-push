@@ -30,12 +30,15 @@
            (pub-b64 (b64url-encode y)))
       (values pub-b64 priv-b64))))
 
-(defun create-vapid-jwt (audience subject private-key)
+(defun create-vapid-jwt (audience subject private-key &key (exp-offset 43200))
   "Create a signed JWT token using ES256 (secp256r1) for VAPID."
   (let* ((header-json "{\"typ\":\"JWT\",\"alg\":\"ES256\"}")
          (header-b64 (b64url-encode (ironclad:ascii-string-to-byte-array header-json)))
-         (exp (unix-time (+ 43200)))
-         (claims-json (format nil "{\"aud\":\"~A\",\"exp\":~A,\"sub\":\"~A\"}" audience exp subject))
+         (exp (unix-time exp-offset))
+         (claims-json (cl-json:encode-json-to-string
+                       `((:aud . ,audience)
+                         (:exp . ,exp)
+                         (:sub . ,subject))))
          (claims-b64 (b64url-encode (ironclad:ascii-string-to-byte-array claims-json)))
          (message (format nil "~A.~A" header-b64 claims-b64))
          (message-bytes (ironclad:ascii-string-to-byte-array message))

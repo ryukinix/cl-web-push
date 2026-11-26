@@ -19,14 +19,45 @@
 
 (define-test vapid-jwt
   (multiple-value-bind (public private) (cl-web-push:generate-vapid-keys)
-    (declare (ignore public))
     (let* ((priv-key (ironclad:make-private-key :secp256r1 :x (cl-web-push:b64url-decode private)))
-           (jwt (cl-web-push:create-vapid-jwt "https://push.example.com" "mailto:admin@test.com" priv-key)))
+           (pub-key (ironclad:make-public-key :secp256r1 :y (cl-web-push:b64url-decode public)))
+           (jwt (cl-web-push:create-vapid-jwt "https://push.example.com" "mailto:admin@test.com" priv-key))
+           (dot1 (position #\. jwt))
+           (dot2 (and dot1 (position #\. jwt :start (1+ dot1)))))
       (true (stringp jwt))
-      (true (search "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9" jwt)) ;; Header B64 validation
-      ;; We expect two parts joined by two dots with 3 blocks payload Header.Payload.Signature
-      ;; Let's just check length and signature existence rather than strictly dot counts if standard is flex
-      (true (> (length jwt) 100))))) 
+      (true (and dot1 dot2 (not (position #\. jwt :start (1+ dot2)))))
+      ;; Header B64 validation: {"typ":"JWT","alg":"ES256"}
+      (is string= "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9" (subseq jwt 0 dot1))
+      ;; Verify ES256 signature over SHA-256(header.payload)
+      (let* ((signing-input (ironclad:ascii-string-to-byte-array (subseq jwt 0 dot2)))
+             (digest (ironclad:digest-sequence :sha256 signing-input))
+             (sig (cl-web-push:b64url-decode (subseq jwt (1+ dot2)))))
+        (is = 64 (length sig))
+        (true (ironclad:verify-signature pub-key digest sig))))))
+
+(define-test endpoint-audience-parsing
+  (is string= "https://fcm.googleapis.com"
+      (cl-web-push::endpoint-audience "https://fcm.googleapis.com/fcm/send/abc"))
+  (is string= "https://updates.push.services.mozilla.com"
+      (cl-web-push::endpoint-audience "https://updates.push.services.mozilla.com:443/wpush/v2/xyz"))
+  (is string= "https://web.push.apple.com"
+      (cl-web-push::endpoint-audience "https://web.push.apple.com/Q123456"))
+  (is string= "https://push.example.com:8443"
+      (cl-web-push::endpoint-audience "https://push.example.com:8443/sub/1"))
+  (fail (cl-web-push::endpoint-audience "not-a-url")))
+
+(define-test payload-size-limit
+  (let* ((client-keys (multiple-value-list (ironclad:generate-key-pair :secp256r1)))
+         (server-keys (multiple-value-list (ironclad:generate-key-pair :secp256r1)))
+         (salt (ironclad:random-data 16))
+         (auth-secret (ironclad:random-data 16))
+         (oversized (make-array 4000 :element-type '(unsigned-byte 8) :initial-element 65)))
+    (fail (cl-web-push:encrypt-payload oversized
+                                       auth-secret
+                                       (second client-keys)
+                                       (first server-keys)
+                                       (second server-keys)
+                                       salt))))
 
 (define-test aes-gcm-logic
   ;; Simulating payload encryption steps since testing end-to-end requires an actual push subscription 

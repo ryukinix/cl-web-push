@@ -10,6 +10,7 @@
                #:flexi-streams
                #:cl-base64
                #:cl-json
+               #:quri
                #:dexador)
   :components ((:file "package")
                (:file "vapid")

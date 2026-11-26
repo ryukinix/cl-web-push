@@ -51,8 +51,7 @@
   ;; T(0) = empty string
   ;; T(i) = HMAC-Hash(PRK, T(i-1) | info | i)
   ;; OKM = T(1) | T(2) | ... | T(n)
-  (let ((hmac (ironclad:make-mac :hmac prk :sha256))
-        (okm (make-array length :element-type '(unsigned-byte 8)))
+  (let ((okm (make-array length :element-type '(unsigned-byte 8)))
         (t-prev (make-array 0 :element-type '(unsigned-byte 8)))
         (i 1))
     (loop for pos from 0 below length by 32
@@ -165,6 +164,11 @@
 
 (defun encrypt-payload (payload client-auth-secret client-public-key server-private-key server-public-key salt)
   "Encrypt payload using AES-GCM (RFC 8291)."
+  ;; RFC 8291 single-record aes128gcm (rs=4096) with 86-byte header + 1-byte delimiter + 16-byte GCM tag
+  ;; leaves at most 3993 bytes for plaintext within the 4096-byte push service payload limit.
+  (when (> (length payload) 3993)
+    (error "Payload too large (~A bytes). Web Push aes128gcm maximum plaintext size is 3993 bytes."
+           (length payload)))
   (let* ((shared-secret (derive-shared-secret server-private-key client-public-key))
          ;; 1. key_info = "WebPush: info" || 0x00 || client_public_key || server_public_key
          (key-info (build-info "info" (serialize-public-key client-public-key) (serialize-public-key server-public-key)))
